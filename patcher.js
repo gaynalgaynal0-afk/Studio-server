@@ -254,22 +254,19 @@ async function patchSharkSampleTableMethod(fileBuffer) {
   const stco = stbl && findChild(stbl, 'stco');
   if (!stbl || !mdhd || !elst || !stts || !stsc || !stsz || !stco) { throw new Error('Missing target stream atoms.'); }
 
-  // 1. DYNAMIC DURATION COMPUTATION BASED ON INPUT METADATA
   const origMeta = getOriginalDurationInfo(mdhd);
   const videoSeconds = origMeta.duration / origMeta.timescale;
-  
-  // Scales up gracefully only if video length extends past 25.21s boundary limit
   const targetDuration = Math.max(2269500, Math.ceil(videoSeconds * VIDEO_TIMESCALE));
 
   const originalSizes = parseStsz(stsz); 
   const realSampleCount = originalSizes.length; 
-  
-  // 2. ADAPTIVE FAKE SAMPLE CAPACITY COMPUTATION
   const fakeSampleCount = Math.max(realSampleCount * 9, Math.floor(targetDuration / VIDEO_SAMPLE_DELTA));
 
   const originalStscRows = parseStsc(stsc); 
   const originalChunkOffsets = parseStco(stco); 
   const stcoBoxes = collectTrackStcoBoxes(moov);
+  
+  // ⚠️ PRESERVE ALL ADDITIONAL TOP-LEVEL ATOMS SEAMLESSLY
   const preservedTopLevel = topLevel.filter((box) => !['ftyp', 'moov', 'mdat'].includes(box.type)).map(boxBytes);
 
   const fixedReplacements = new Map([
@@ -286,6 +283,8 @@ async function patchSharkSampleTableMethod(fileBuffer) {
   const moovPlaceholder = rebuildBox(moov, placeholderReplacements); 
   const preservedBytes = Buffer.concat(preservedTopLevel);
   const oldMdatPayloadStart = mdat.contentStart; 
+  
+  // 📥 READ THE ENTIRE MDAT RAW DATA LAYER SAFELY (PREVENTS 12KB STRIPPING)
   const oldMdatPayload = fileBuffer.subarray(mdat.contentStart, mdat.end);
   const newMdatPayloadStart = ftyp.size + moovPlaceholder.length + preservedBytes.length + 8;
   
@@ -304,6 +303,7 @@ async function patchSharkSampleTableMethod(fileBuffer) {
   buildStcoReplacements(stcoBoxes, stco, delta, fakeOffset, fakeSampleCount).forEach((value, key) => { finalReplacements.set(key, value); });
   moovNew = rebuildBox(moov, finalReplacements);
   
+  // Concatenate the massive original data block back together with the trailer byte signature
   const mdatPayloadNew = Buffer.concat([oldMdatPayload, FAKE_SAMPLE_BYTES]);
   const mdatNew = makeBox('mdat', mdatPayloadNew);
   
