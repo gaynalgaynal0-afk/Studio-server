@@ -46,10 +46,11 @@ app.post('/patch', upload.single('video'), async (req, res) => {
     // 🎯 Send back video (no saving)
     res.set({
       'Content-Type': 'video/mp4',
-      'Content-Disposition': 'attachment; filename=patched.mp4'
+      'Content-Disposition': 'attachment; filename=patched.mp4',
+      'Content-Length': result.output.length
     });
 
-    res.send(Buffer.from(result.output));
+    res.send(result.output);
 
   } catch (err) {
     console.error("PATCH ERROR:", err);
