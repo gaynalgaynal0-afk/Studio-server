@@ -4,16 +4,16 @@ const cors = require('cors');
 
 const app = express();
 
-// ✅ Enable CORS
+// ✅ Enable CORS (for extension requests)
 app.use(cors());
 
-// 🔒 Memory upload configuration (30MB Limit)
+// 🔒 Memory upload (NO disk storage)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 30 * 1024 * 1024 } 
+  limits: { fileSize: 30 * 1024 * 1024 } // 30MB
 });
 
-// 🔐 API key protection
+// 🔐 Optional API key protection
 const API_KEY = "JOY_API_KEY";
 
 app.use((req, res, next) => {
@@ -24,10 +24,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// 📦 Load the patcher
-const { patchSharkSampleTableMethod } = require('./patcher');
+// 📦 Load patcher
+const { patchVideo } = require('./patcher');
 
-// 🚀 MAIN PATCH ROUTE
+// 🚀 MAIN ROUTE
 app.post('/patch', upload.single('video'), async (req, res) => {
   try {
     if (!req.file) {
@@ -36,41 +36,38 @@ app.post('/patch', upload.single('video'), async (req, res) => {
 
     const inputBuffer = req.file.buffer;
 
-    // ⚡ Run the patcher
-    const result = await patchSharkSampleTableMethod(inputBuffer);
+    // ⚡ Run patcher (mvhd/mdhd timestamp patch)
+    const result = await patchVideo(inputBuffer);
 
     if (!result || !result.output) {
       return res.status(500).send('Invalid patch result');
     }
 
-    // 🎯 Extract the raw output buffer directly
-    const finalBuffer = result.output;
-
-    // 🏷️ Set exact headers
-    res.writeHead(200, {
+    // 🎯 Send back video (no saving)
+    res.set({
       'Content-Type': 'video/mp4',
-      'Content-Disposition': 'attachment; filename="patched.mp4"',
-      'Content-Length': finalBuffer.length
+      'Content-Disposition': 'attachment; filename=patched.mp4'
     });
 
-    // 🚀 Stream the video buffer cleanly without Express conversions
-    res.write(finalBuffer);
-    res.end();
+    res.send(Buffer.from(result.output));
 
   } catch (err) {
     console.error("PATCH ERROR:", err);
-    if (!res.headersSent) {
-      res.status(500).send('Patch failed');
-    }
+    res.status(500).send('Patch failed');
   }
 });
 
-// ⚠️ Error handler
+// ⚠️ File too large handler
 app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).send('File too large.');
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).send('Max file size is 30MB');
   }
   next(err);
+});
+
+// ❤️ Health check (Render needs this)
+app.get('/', (req, res) => {
+  res.send('Server is running');
 });
 
 const PORT = process.env.PORT || 3000;
