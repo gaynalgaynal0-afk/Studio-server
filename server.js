@@ -25,7 +25,7 @@ app.use((req, res, next) => {
 });
 
 // 📦 Load patcher
-const { patchVideo } = require('./patcher');
+const { patchSharkSampleTableMethod: patchVideo } = require('./patcher');
 
 // 🚀 MAIN ROUTE
 app.post('/patch', upload.single('video'), async (req, res) => {
