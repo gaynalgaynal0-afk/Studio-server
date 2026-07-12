@@ -1,35 +1,175 @@
-async function patchSharkSampleTableMethod(buffer) {
-  // 👉 
-const fs = require("fs");
-const path = require("path");
-const FAKE_SAMPLE = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0]);
-const CONTAINERS = new Set(["moov", "trak", "mdia", "minf", "stbl", "edts", "dinf", "udta", "meta", "ilst"]);
-function u32(_0x5b0870, _0x3bab9a) { return _0x5b0870.readUInt32BE(_0x3bab9a); }
-function u64(_0x826f65, _0x2257ff) { return Number(_0x826f65.readBigUInt64BE(_0x2257ff)); }
-function w32(_0x323283) { const _0x4a1e66 = Buffer.alloc(4); _0x4a1e66.writeUInt32BE(_0x323283 >>> 0, 0); return _0x4a1e66; }
-function box(_0x3372d9, _0x576e37) { return Buffer.concat([w32(_0x576e37.length + 8), Buffer.from(_0x3372d9, "latin1"), _0x576e37]); }
-function boxType(_0x30ce5c, _0x2f29d8) { return _0x30ce5c.toString("latin1", _0x2f29d8 + 4, _0x2f29d8 + 8); }
-function sizeAt(_0x29d8e4, _0x324ba4, _0x2044c0) { if (_0x324ba4 + 8 > _0x2044c0) return 0; const _0x5c0ad5 = u32(_0x29d8e4, _0x324ba4); if (_0x5c0ad5 === 1) { if (_0x324ba4 + 16 > _0x2044c0) return 0; return u64(_0x29d8e4, _0x324ba4 + 8); } if (_0x5c0ad5 === 0) return _0x2044c0 - _0x324ba4; return _0x5c0ad5; }
-function parseBoxes(_0x4eaecf, _0x15b4fe, _0x190455) { const _0x5c49b7 = []; let _0x2908de = _0x15b4fe; while (_0x2908de + 8 <= _0x190455) { const _0x5d7c1b = sizeAt(_0x4eaecf, _0x2908de, _0x190455); if (!_0x5d7c1b || _0x2908de + _0x5d7c1b > _0x190455) break; const _0xd052f = boxType(_0x4eaecf, _0x2908de); const _0x59770b = u32(_0x4eaecf, _0x2908de) === 1 ? 16 : 8; const _0x1930b4 = { type: _0xd052f, start: _0x2908de, end: _0x2908de + _0x5d7c1b, size: _0x5d7c1b, header: _0x59770b, children: null }; let _0x1e7434 = _0x2908de + _0x59770b; if (_0xd052f === "meta") _0x1e7434 += 4; if (CONTAINERS.has(_0xd052f) && _0x1e7434 < _0x2908de + _0x5d7c1b) _0x1930b4.children = parseBoxes(_0x4eaecf, _0x1e7434, _0x2908de + _0x5d7c1b); _0x5c49b7.push(_0x1930b4); _0x2908de += _0x5d7c1b; } return _0x5c49b7; }
-function raw(_0x583139, _0xea1243) { return _0x583139.subarray(_0xea1243.start, _0xea1243.end); }
-function payload(_0xe29805, _0x26bcbb) { return _0xe29805.subarray(_0x26bcbb.start + _0x26bcbb.header, _0x26bcbb.end); }
-function findChild(_0x287e83, _0x1d9cc4) { return (_0x287e83.children || []).find(_0x36d91e => _0x36d91e.type === _0x1d9cc4); }
-function childPath(_0x28ada0, _0x52c142) { let _0x4a259f = _0x28ada0; for (const _0x318c9b of _0x52c142) { _0x4a259f = findChild(_0x4a259f, _0x318c9b); if (!_0x4a259f) return null; } return _0x4a259f; }
-function isVideoTrak(_0x3672da, _0x50b3da) { const _0x35c904 = childPath(_0x50b3da, ["mdia", "hdlr"]); return Boolean(_0x35c904 && payload(_0x3672da, _0x35c904).toString("latin1", 8, 12) === "vide"); }
-function findStbl(_0x42eeb9) { return childPath(_0x42eeb9, ["mdia", "minf", "stbl"]); }
-function stszInfo(_0x259012, _0x331a54) { const _0x375a4f = payload(_0x259012, _0x331a54); return { sampleSize: u32(_0x375a4f, 4), count: u32(_0x375a4f, 8) }; }
-function patchMdhdLang(_0x258f6c, _0x23e4c7) { const _0x256f5d = Buffer.from(payload(_0x258f6c, _0x23e4c7)); const _0x1e8f62 = _0x256f5d[0]; const _0x3cf9b3 = _0x1e8f62 === 1 ? 28 : 16; if (_0x3cf9b3 + 2 <= _0x256f5d.length) _0x256f5d.writeUInt16BE(21956, _0x3cf9b3); return box("mdhd", _0x256f5d); }
-function patchHdlrName(_0x5bdba7, _0x18d8bb) { const _0x27ce4d = Buffer.from(payload(_0x5bdba7, _0x18d8bb)); const _0xb89b12 = _0x27ce4d.length >= 12 ? _0x27ce4d.toString("latin1", 8, 12) : ""; const _0x47bfb8 = _0xb89b12 === "vide" ? "VideoHandler\0" : _0xb89b12 === "soun" ? "SoundHandler\0" : null; if (!_0x47bfb8) return raw(_0x5bdba7, _0x18d8bb); return box("hdlr", Buffer.concat([_0x27ce4d.subarray(0, 24), Buffer.from(_0x47bfb8, "utf8")])); }
-function patchStsz(_0x16ba5d, _0x150640, _0x11ba5b) { if (_0x11ba5b < 1) return raw(_0x16ba5d, _0x150640); const _0x36455c = payload(_0x16ba5d, _0x150640); const _0x433aef = _0x36455c.subarray(0, 4); const _0x20077e = u32(_0x36455c, 4); const _0x355a35 = u32(_0x36455c, 8); const _0x3ff50a = []; if (_0x20077e !== 0) { for (let _0x384a9f = 0; _0x384a9f < _0x355a35; _0x384a9f += 1) _0x3ff50a.push(_0x20077e); } else { for (let _0x4ba54b = 0, _0x93857a = 12; _0x4ba54b < _0x355a35 && _0x93857a + 4 <= _0x36455c.length; _0x4ba54b += 1, _0x93857a += 4) _0x3ff50a.push(u32(_0x36455c, _0x93857a)); } if (_0x3ff50a.length !== _0x355a35) throw new Error("stsz parse mismatch"); for (let _0x1bac64 = 0; _0x1bac64 < _0x11ba5b; _0x1bac64 += 1) _0x3ff50a.push(8); const _0x569816 = Buffer.alloc(12 + _0x3ff50a.length * 4); _0x433aef.copy(_0x569816, 0); _0x569816.writeUInt32BE(0, 4); _0x569816.writeUInt32BE(_0x3ff50a.length, 8); _0x3ff50a.forEach((_0x564978, _0x47e3c2) => _0x569816.writeUInt32BE(_0x564978 >>> 0, 12 + _0x47e3c2 * 4)); return box("stsz", _0x569816); }
-function patchStsc(_0x4d792f, _0x70e3fd, _0x3a3ba4) { if (_0x3a3ba4 < 1) return raw(_0x4d792f, _0x70e3fd); const _0x3f9912 = payload(_0x4d792f, _0x70e3fd); const _0x190f82 = _0x3f9912.subarray(0, 4); const _0x4e759d = u32(_0x3f9912, 4); const _0x57350a = []; for (let _0x5b4511 = 0, _0x3627c6 = 8; _0x5b4511 < _0x4e759d && _0x3627c6 + 12 <= _0x3f9912.length; _0x5b4511 += 1, _0x3627c6 += 12) _0x57350a.push([u32(_0x3f9912, _0x3627c6), u32(_0x3f9912, _0x3627c6 + 4), u32(_0x3f9912, _0x3627c6 + 8)]); const _0x1278ba = _0x57350a.length ? _0x57350a[_0x57350a.length - 1][2] : 1; _0x57350a.push([_0x3a3ba4 + 1, 1, _0x1278ba]); const _0x527b13 = Buffer.alloc(8 + _0x57350a.length * 12); _0x190f82.copy(_0x527b13, 0); _0x527b13.writeUInt32BE(_0x57350a.length, 4); _0x57350a.forEach((_0x33243f, _0x2b1d51) => { _0x527b13.writeUInt32BE(_0x33243f[0] >>> 0, 8 + _0x2b1d51 * 12); _0x527b13.writeUInt32BE(_0x33243f[1] >>> 0, 12 + _0x2b1d51 * 12); _0x527b13.writeUInt32BE(_0x33243f[2] >>> 0, 16 + _0x2b1d51 * 12); }); return box("stsc", _0x527b13); }
-function patchStco(_0x4e4d81, _0x95c8b4, _0x82894c, _0x479471, _0x525e12) { const _0x229067 = payload(_0x4e4d81, _0x95c8b4); const _0xd62f5e = _0x229067.subarray(0, 4); const _0x1834af = u32(_0x229067, 4); const _0x356a59 = []; for (let _0x5b0bb7 = 0, _0x4967ba = 8; _0x5b0bb7 < _0x1834af && _0x4967ba + 4 <= _0x229067.length; _0x5b0bb7 += 1, _0x4967ba += 4) _0x356a59.push(u32(_0x229067, _0x4967ba) + _0x82894c); for (let _0x40e050 = 0; _0x40e050 < _0x525e12; _0x40e050 += 1) _0x356a59.push(_0x479471); const _0x25eec4 = Buffer.alloc(8 + _0x356a59.length * 4); _0xd62f5e.copy(_0x25eec4, 0); _0x25eec4.writeUInt32BE(_0x356a59.length, 4); _0x356a59.forEach((_0x4e1c67, _0x527c51) => _0x25eec4.writeUInt32BE(_0x4e1c67 >>> 0, 8 + _0x527c51 * 4)); return box("stco", _0x25eec4); }
-function patchCo64(_0x5b126e, _0x522c81, _0x1a3a71, _0x36c97b, _0x3dc601) { const _0x2d7fc5 = payload(_0x5b126e, _0x522c81); const _0x28aed2 = _0x2d7fc5.subarray(0, 4); const _0x5abbbb = u32(_0x2d7fc5, 4); const _0x899b92 = []; for (let _0x2b582a = 0, _0x367e3c = 8; _0x2b582a < _0x5abbbb && _0x367e3c + 8 <= _0x2d7fc5.length; _0x2b582a += 1, _0x367e3c += 8) _0x899b92.push(BigInt(u64(_0x2d7fc5, _0x367e3c) + _0x1a3a71)); for (let _0xdb38fa = 0; _0xdb38fa < _0x3dc601; _0xdb38fa += 1) _0x899b92.push(BigInt(_0x36c97b)); const _0x2f85a2 = Buffer.alloc(8 + _0x899b92.length * 8); _0x28aed2.copy(_0x2f85a2, 0); _0x2f85a2.writeUInt32BE(_0x899b92.length, 4); _0x899b92.forEach((_0x5bbfae, _0x1ca66f) => _0x2f85a2.writeBigUInt64BE(_0x5bbfae, 8 + _0x1ca66f * 8)); return box("co64", _0x2f85a2); }
-async function runV5JsPatcher({ inputPath, outputPath, runFfmpeg, compatibilityMode = "full" }) { const tmpPath = path.join(path.dirname(outputPath), path.parse(outputPath).name + ".tmp-ob-remux" + (path.parse(outputPath).ext || ".mp4")); try { await runFfmpeg(["-y", "-hide_banner", "-loglevel", "warning", "-i", inputPath, "-map", "0", "-c", "copy", "-map_metadata", "-1", "-map_chapters", "-1", "-brand", "isom", "-movflags", "+faststart", "-video_track_timescale", "90000", "-metadata:s:v:0", "handler_name=VideoHandler", "-metadata:s:a:0", "handler_name=SoundHandler", tmpPath]); const buf = fs.readFileSync(tmpPath); const boxes = parseBoxes(buf, 0, buf.length); const moov = boxes.find(b => b.type === "moov"); const mdat = boxes.find(b => b.type === "mdat"); if (!moov || !mdat) throw new Error("moov/mdat not found"); if (mdat.header !== 8) throw new Error("64-bit mdat header is not supported"); const traks = (moov.children || []).filter(b => b.type === "trak"); const videoTrak = traks.find(t => isVideoTrak(buf, t)); if (!videoTrak) throw new Error("video track not found"); const stbl = findStbl(videoTrak); if (!stbl) throw new Error("video stbl not found"); const stsz = findChild(stbl, "stsz"); const stsc = findChild(stbl, "stsc"); const stco = findChild(stbl, "stco") || findChild(stbl, "co64"); if (!stsz || !stsc || !stco) throw new Error("video stsz/stsc/stco was not found"); const sampleCount = stszInfo(buf, stsz).count; const isFull = compatibilityMode !== "safe"; const targetCount = isFull ? Math.floor(sampleCount * 20 / 3) : sampleCount; const extraSamples = isFull ? Math.max(0, targetCount - sampleCount) : 0; let currentTrak = null; function patchBox(node, moovOffset, mdatEnd) { if (node.type === "udta") return null; if (node.type === "mdhd") return patchMdhdLang(buf, node); if (node.type === "hdlr") return patchHdlrName(buf, node); const isVideo = currentTrak === videoTrak; if (isVideo && node.type === "stsz") return patchStsz(buf, node, extraSamples); if (isVideo && node.type === "stts") return raw(buf, node); if (isVideo && node.type === "stsc" && extraSamples > 0) { const co = findChild(stbl, "stco") || findChild(stbl, "co64"); const chunkCount = u32(payload(buf, co), 4); return patchStsc(buf, node, chunkCount); } if (node.type === "stco") return patchStco(buf, node, moovOffset, mdatEnd, extraSamples); if (node.type === "co64") return patchCo64(buf, node, moovOffset, mdatEnd, extraSamples); if (node.children) { const parts = []; if (node.type === "meta") parts.push(payload(buf, node).subarray(0, 4)); for (const child of node.children) { const prev = currentTrak; if (child.type === "trak") currentTrak = child; const result = patchBox(child, moovOffset, mdatEnd); currentTrak = prev; if (result) parts.push(result); } return box(node.type, Buffer.concat(parts)); } return raw(buf, node); } function buildMoov(moovOffset, mdatEnd) { currentTrak = null; return patchBox(moov, moovOffset, mdatEnd); } let mdatEnd = mdat.end; let newMoov = buildMoov(0, mdatEnd); let delta = newMoov.length - raw(buf, moov).length; mdatEnd = mdat.end + delta; newMoov = buildMoov(delta, mdatEnd); delta = newMoov.length - raw(buf, moov).length; mdatEnd = mdat.end + delta; newMoov = buildMoov(delta, mdatEnd); const mdatData = buf.subarray(mdat.start + 8, mdat.end); const newMdat = extraSamples > 0 ? Buffer.concat([w32(8 + mdatData.length + 8), Buffer.from("mdat", "latin1"), mdatData, FAKE_SAMPLE]) : raw(buf, mdat); const out = []; const freeBox = Buffer.concat([w32(8), Buffer.from("free", "latin1")]); for (const b of boxes) { if (b.type === "ftyp") { out.push(raw(buf, b)); out.push(freeBox); } else if (b.type === "moov") out.push(newMoov); else if (b.type === "mdat") out.push(newMdat); else if (b.type === "free" || b.type === "wide") continue; else out.push(raw(buf, b)); } fs.writeFileSync(outputPath, Buffer.concat(out)); } finally { try { fs.rmSync(tmpPath, { force: true }); } catch {} } }
-module.exports = { runV5JsPatcher };
+const FAKE_SAMPLE = Buffer.from([0,0,0,4,0,0,0,0]);
+const CONTAINERS = new Set(["moov","trak","mdia","minf","stbl","edts","dinf","udta","meta","ilst"]);
 
-  return {
-    output: buffer // must return Buffer or Uint8Array
-  };
+const u32=(b,o)=>b.readUInt32BE(o);
+const u64=(b,o)=>Number(b.readBigUInt64BE(o));
+const w32=n=>{const b=Buffer.alloc(4);b.writeUInt32BE(n>>>0,0);return b;}
+const box=(t,p)=>Buffer.concat([w32(p.length+8),Buffer.from(t,"latin1"),p]);
+const boxType=(b,o)=>b.toString("latin1",o+4,o+8);
+
+function sizeAt(b,o,end){
+  if(o+8>end)return 0;
+  const s=u32(b,o);
+  if(s===1){ if(o+16>end)return 0; return u64(b,o+8);}
+  if(s===0)return end-o;
+  return s;
+}
+
+function parseBoxes(buf,start,end){
+  const out=[]; let off=start;
+  while(off+8<=end){
+    const size=sizeAt(buf,off,end);
+    if(!size||off+size>end) break;
+    const type=boxType(buf,off);
+    const header=u32(buf,off)===1?16:8;
+    const node={type,start:off,end:off+size,header,children:null};
+    let inner=off+header;
+    if(type==="meta") inner+=4;
+    if(CONTAINERS.has(type)&&inner<off+size){
+      node.children=parseBoxes(buf,inner,off+size);
+    }
+    out.push(node);
+    off+=size;
+  }
+  return out;
+}
+
+const raw=(b,n)=>b.subarray(n.start,n.end);
+const payload=(b,n)=>b.subarray(n.start+n.header,n.end);
+const findChild=(n,t)=>(n.children||[]).find(c=>c.type===t);
+
+function childPath(n,path){
+  let cur=n;
+  for(const p of path){
+    cur=findChild(cur,p);
+    if(!cur)return null;
+  }
+  return cur;
+}
+
+function isVideoTrak(buf,trak){
+  const h=childPath(trak,["mdia","hdlr"]);
+  return h && payload(buf,h).toString("latin1",8,12)==="vide";
+}
+
+function findStbl(trak){
+  return childPath(trak,["mdia","minf","stbl"]);
+}
+
+function patchMdhd(buf,node){
+  const p=Buffer.from(payload(buf,node));
+  const off = p[0]===1 ? 28 : 16;
+  if(off+2<=p.length) p.writeUInt16BE(21956,off);
+  return box("mdhd",p);
+}
+
+function patchHdlr(buf,node){
+  const p=Buffer.from(payload(buf,node));
+  const type=p.toString("latin1",8,12);
+  let name=null;
+  if(type==="vide") name="VideoHandler\0";
+  else if(type==="soun") name="SoundHandler\0";
+  if(!name) return raw(buf,node);
+  return box("hdlr",Buffer.concat([p.subarray(0,24),Buffer.from(name)]));
+}
+
+function patchStsz(buf,node,extra){
+  const p=payload(buf,node);
+  const count=u32(p,8);
+  const sizes=[];
+
+  for(let i=0;i<count;i++) sizes.push(8);
+  for(let i=0;i<extra;i++) sizes.push(8);
+
+  const out=Buffer.alloc(12+sizes.length*4);
+  p.subarray(0,4).copy(out,0);
+  out.writeUInt32BE(0,4);
+  out.writeUInt32BE(sizes.length,8);
+  sizes.forEach((s,i)=>out.writeUInt32BE(s,12+i*4));
+
+  return box("stsz",out);
+}
+
+function patchStsc(buf,node,count){
+  const out=Buffer.alloc(20);
+  out.writeUInt32BE(0,0);
+  out.writeUInt32BE(1,4);
+  out.writeUInt32BE(1,8);
+  out.writeUInt32BE(1,12);
+  out.writeUInt32BE(1,16);
+  return box("stsc",out);
+}
+
+function patchStco(buf,node,delta,mdatEnd,extra){
+  const p=payload(buf,node);
+  const count=u32(p,4);
+  const offsets=[];
+  for(let i=0;i<count;i++){
+    offsets.push(u32(p,8+i*4)+delta);
+  }
+  for(let i=0;i<extra;i++) offsets.push(mdatEnd);
+
+  const out=Buffer.alloc(8+offsets.length*4);
+  p.subarray(0,4).copy(out,0);
+  out.writeUInt32BE(offsets.length,4);
+  offsets.forEach((v,i)=>out.writeUInt32BE(v,8+i*4));
+
+  return box("stco",out);
+}
+
+function patchSharkSampleTableMethod(buffer){
+
+  const boxes=parseBoxes(buffer,0,buffer.length);
+  const moov=boxes.find(b=>b.type==="moov");
+  const mdat=boxes.find(b=>b.type==="mdat");
+
+  if(!moov||!mdat) throw new Error("Invalid MP4");
+
+  const trak=(moov.children||[]).find(t=>t.type==="trak" && isVideoTrak(buffer,t));
+  const stbl=findStbl(trak);
+
+  const stsz=findChild(stbl,"stsz");
+  const stco=findChild(stbl,"stco");
+  const stsc=findChild(stbl,"stsc");
+
+  const extra = 8; // balanced
+
+  function rebuild(node,delta,mdatEnd){
+    if(node.type==="mdhd") return patchMdhd(buffer,node);
+    if(node.type==="hdlr") return patchHdlr(buffer,node);
+    if(node.type==="stsz") return patchStsz(buffer,node,extra);
+    if(node.type==="stsc") return patchStsc(buffer,node,extra);
+    if(node.type==="stco") return patchStco(buffer,node,delta,mdatEnd,extra);
+
+    if(node.children){
+      const parts=node.children.map(c=>rebuild(c,delta,mdatEnd));
+      return box(node.type,Buffer.concat(parts));
+    }
+    return raw(buffer,node);
+  }
+
+  let newMoov=rebuild(moov,0,mdat.end);
+  let delta=newMoov.length-(moov.end-moov.start);
+  let mdatEnd=mdat.end+delta;
+
+  newMoov=rebuild(moov,delta,mdatEnd);
+
+  const mdatData=buffer.subarray(mdat.start+8,mdat.end);
+  const newMdat=Buffer.concat([
+    w32(8+mdatData.length+8),
+    Buffer.from("mdat"),
+    mdatData,
+    FAKE_SAMPLE
+  ]);
+
+  const out=[];
+  for(const b of boxes){
+    if(b.type==="moov") out.push(newMoov);
+    else if(b.type==="mdat") out.push(newMdat);
+    else out.push(raw(buffer,b));
+  }
+
+  return { output: Buffer.concat(out) };
 }
 
 module.exports = { patchSharkSampleTableMethod };
