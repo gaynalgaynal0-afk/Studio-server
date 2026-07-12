@@ -15,7 +15,6 @@ function sizeAt(buf, offset, end) {
   return s; 
 }
 
-// FIX #1: Add protection against malicious MP4s
 function parseBoxes(buf, start, end, depth = 0) { 
   if (depth > 20) throw new Error("Box nesting too deep (possible cycle or bomb)");
   if (start < 0 || end > buf.length) throw new Error("Invalid box range");
@@ -26,7 +25,6 @@ function parseBoxes(buf, start, end, depth = 0) {
   while (offset + 8 <= end) { 
     const size = sizeAt(buf, offset, end); 
     
-    // Validate size
     if (!size || size < 8) throw new Error(`Invalid box size ${size} at offset ${offset}`);
     if (offset + size > end) throw new Error(`Box extends past buffer at offset ${offset}`);
     if (size > 100 * 1024 * 1024) throw new Error(`Box suspiciously large (${size} bytes)`);
@@ -91,7 +89,6 @@ function patchStsz(buf, node, extra) {
   return box("stsz", outBuf); 
 }
 
-// FIX #2: Correct chunk calculation (was: extra + 1, now: lastChunk + 1)
 function patchStsc(buf, node, stblNode, extra) { 
   if (extra < 1) return raw(buf, node); 
   const p = payload(buf, node); 
@@ -105,7 +102,6 @@ function patchStsc(buf, node, stblNode, extra) {
   
   const sampleIdx = list.length ? list[list.length - 1][2] : 1;
   
-  // FIX: Get actual last chunk number from stco/co64
   const stco = findChild(stblNode, "stco") || findChild(stblNode, "co64");
   let lastChunk = 0;
   if (stco) {
@@ -114,7 +110,6 @@ function patchStsc(buf, node, stblNode, extra) {
     lastChunk = stcoCount > 0 ? stcoCount : 1;
   }
   
-  // Add new entry for the next chunk
   list.push([lastChunk + 1, 1, sampleIdx]); 
   
   const outBuf = Buffer.alloc(8 + list.length * 12); 
@@ -128,14 +123,12 @@ function patchStsc(buf, node, stblNode, extra) {
   return box("stsc", outBuf); 
 }
 
-// FIX #3: Add overflow protection for 32-bit offsets
 function patchStco(buf, node, moovOffset, mdatEnd, extra) { 
   const p = payload(buf, node); 
   const flags = p.subarray(0, 4); 
   const count = u32(p, 4); 
   const list = []; 
   
-  // Check for overflow risk
   const MAX_32BIT = 0xFFFFFFFF;
   if (moovOffset > 0x7FFFFFFF) {
     throw new Error("Video exceeds 4GB. stco (32-bit) cannot handle this offset. Requires co64 upgrade.");
@@ -148,7 +141,6 @@ function patchStco(buf, node, moovOffset, mdatEnd, extra) {
     const oldOffset = u32(p, off);
     const newOffset = oldOffset + moovOffset;
     
-    // Detect overflow
     if (newOffset > MAX_32BIT) {
       throw new Error(`Chunk ${i}: offset overflow (${oldOffset} + ${moovOffset} > 4GB). Video too large.`);
     }
@@ -191,12 +183,7 @@ function patchCo64(buf, node, moovOffset, mdatEnd, extra) {
   return box("co64", outBuf); 
 }
 
-// FIX #4: Remove unused async keyword and add comprehensive validation
 function patchSharkSampleTableMethod(buf) {
-  // ─────────────────────────────────────────────────────────────
-  // COMPREHENSIVE INPUT VALIDATION
-  // ─────────────────────────────────────────────────────────────
-  
   if (!Buffer.isBuffer(buf)) {
     throw new Error("Input must be a Buffer");
   }
@@ -209,7 +196,6 @@ function patchSharkSampleTableMethod(buf) {
     throw new Error("File exceeds 30MB limit");
   }
   
-  // Validate ftyp box exists
   const ftypSize = buf.readUInt32BE(0);
   if (ftypSize < 8 || ftypSize > Math.min(1000, buf.length)) {
     throw new Error("Invalid ftyp size");
@@ -219,10 +205,6 @@ function patchSharkSampleTableMethod(buf) {
     throw new Error("Not a valid MP4 file (missing ftyp box at start)");
   }
   
-  // ─────────────────────────────────────────────────────────────
-  // MAIN PATCHING
-  // ─────────────────────────────────────────────────────────────
-  
   const boxes = parseBoxes(buf, 0, buf.length);
   const moov = boxes.find(b => b.type === "moov");
   const mdat = boxes.find(b => b.type === "mdat");
@@ -230,7 +212,6 @@ function patchSharkSampleTableMethod(buf) {
   if (!moov) throw new Error("moov box not found in MP4");
   if (!mdat) throw new Error("mdat box not found in MP4");
   
-  // Better error message for 64-bit mdat
   if (mdat.header === 16) {
     throw new Error("Large MP4 with 64-bit mdat size detected (>4GB). Not supported. Re-mux with faststart first.");
   }
@@ -266,7 +247,7 @@ function patchSharkSampleTableMethod(buf) {
     if (isVideo && node.type === "stsz") return patchStsz(buf, node, extraSamples);
     if (isVideo && node.type === "stts") return raw(buf, node);
     if (isVideo && node.type === "stsc" && extraSamples > 0) {
-      return patchStsc(buf, node, stbl, extraSamples);  // Pass stbl for accurate chunk count
+      return patchStsc(buf, node, stbl, extraSamples);
     }
     if (node.type === "stco") return patchStco(buf, node, moovOffset, mdatEnd, extraSamples);
     if (node.type === "co64") return patchCo64(buf, node, moovOffset, mdatEnd, extraSamples);
@@ -291,7 +272,6 @@ function patchSharkSampleTableMethod(buf) {
     return patchBox(moov, moovOffset, mdatEnd);
   }
 
-  // Three-pass convergence algorithm
   let mdatEnd = mdat.end;
   let newMoov = buildMoov(0, mdatEnd);
   let delta = newMoov.length - raw(buf, moov).length;
@@ -303,10 +283,8 @@ function patchSharkSampleTableMethod(buf) {
   mdatEnd = mdat.end + delta;
   newMoov = buildMoov(delta, mdatEnd);
 
-  const mdatData = buf.subarray(mdat.start + 8, mdat.end);
-  const newMdat = extraSamples > 0 
-    ? Buffer.concat([w32(8 + mdatData.length + 8), Buffer.from("mdat", "latin1"), mdatData, FAKE_SAMPLE]) 
-    : raw(buf, mdat);
+  // ✅ FIX: DO NOT MODIFY MDAT! Just use the original unchanged
+  const newMdat = raw(buf, mdat);
 
   const out = [];
   const freeBox = Buffer.concat([w32(8), Buffer.from("free", "latin1")]);
