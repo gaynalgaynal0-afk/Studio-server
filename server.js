@@ -1,40 +1,48 @@
-const express = require('express');
-const multer = require('multer');
-const cors = require('cors');
+const express = require("express");
+const multer = require("multer");
 
 const app = express();
 
-// ✅ Enable CORS (for extension requests)
-app.use(cors());
-
-// 🔒 Memory upload (NO disk storage)
+// memory only (no temp files)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 30 * 1024 * 1024 } // 30MB
-});
-
-// 🔐 Optional API key protection
-const API_KEY = "JOY_API_KEY";
-
-app.use((req, res, next) => {
-  const key = req.headers['x-api-key'];
-  if (!key || key !== API_KEY) {
-    return res.status(403).send('Unauthorized');
+  limits: {
+    fileSize: 30 * 1024 * 1024
   }
-  next();
 });
 
-// 📦 Load your custom patcher
-const { patchSharkSampleTableMethod } = require('./patcher');
+// ROOT ROUTE (IMPORTANT)
+app.get("/", (req, res) => {
+  res.status(200).send("Server is running");
+});
 
-// 🚀 MAIN ROUTE
-app.post('/patch', upload.single('video'), async (req, res) => {
+// UPLOAD ROUTE
+app.post("/upload", upload.single("video"), (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).send('No file uploaded');
+      return res.status(400).send("No file uploaded");
     }
 
-    const inputBuffer = req.file.buffer;
+    const buffer = req.file.buffer;
+
+    res.writeHead(200, {
+      "Content-Type": "video/mp4",
+      "Content-Length": buffer.length
+    });
+
+    return res.end(buffer);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Processing error");
+  }
+});
+
+const PORT = process.env.PORT || 10000;
+
+app.listen(PORT, () => {
+  console.log("Server running on port " + PORT);
+});    const inputBuffer = req.file.buffer;
 
     // ⚡ Run YOUR patcher
     const result = await patchSharkSampleTableMethod(inputBuffer);
