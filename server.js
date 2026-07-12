@@ -1,40 +1,53 @@
 const express = require("express");
 const multer = require("multer");
+const { patchSharkSampleTableMethod } = require("./patcher");
 
 const app = express();
 
-// memory only (no temp files)
+// Use memory (NO temp files)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 30 * 1024 * 1024
+    fileSize: 30 * 1024 * 1024 // 30MB max
   }
 });
 
-// ROOT ROUTE (IMPORTANT)
+// Root route (fixes "Unauthorized")
 app.get("/", (req, res) => {
   res.status(200).send("Server is running");
 });
 
-// UPLOAD ROUTE
+// Upload route
 app.post("/upload", upload.single("video"), (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).send("No file uploaded");
     }
 
-    const buffer = req.file.buffer;
+    const inputBuffer = req.file.buffer;
+
+    // ✅ FIX: NO await
+    const { output } = patchSharkSampleTableMethod(inputBuffer);
 
     res.writeHead(200, {
       "Content-Type": "video/mp4",
-      "Content-Length": buffer.length
+      "Content-Length": output.length
     });
 
-    return res.end(buffer);
+    return res.end(output);
 
   } catch (err) {
-    console.error(err);
+    console.error("ERROR:", err);
     res.status(500).send("Processing error");
+  }
+});
+
+// Start server
+const PORT = process.env.PORT || 10000;
+
+app.listen(PORT, () => {
+  console.log("Server running on port " + PORT);
+});    res.status(500).send("Processing error");
   }
 });
 
