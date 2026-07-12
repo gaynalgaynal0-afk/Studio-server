@@ -1,65 +1,53 @@
 const express = require("express");
 const multer = require("multer");
-const { patchSharkSampleTableMethod } = require("./patcher");
+const fs = require("fs");
+const path = require("path");
+
+const { runV5JsPatcher } = require("./patcher");
 
 const app = express();
+const upload = multer({ dest: "uploads/" });
 
-// Use memory storage
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB max
-  }
-});
-
-// Root route
-app.get("/", (req, res) => {
-  res.send("Server is running");
-});
-
-// Upload route (STREAM FIX)
-app.post("/upload", upload.single("video"), (req, res) => {
+// 🔥 Upload endpoint
+app.post("/upload", upload.single("video"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).send("No file uploaded");
     }
 
-    const inputBuffer = req.file.buffer;
+    const inputPath = req.file.path;
+    const outputPath = path.join(
+      "uploads",
+      "patched_" + Date.now() + ".mp4"
+    );
 
-    const { output } = patchSharkSampleTableMethod(inputBuffer);
+    // ✅ Run patcher ONLY (no FFmpeg)
+    await runV5JsPatcher({
+      inputPath,
+      outputPath,
+      compatibilityMode: "safe"
+    });
 
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Content-Length", output.length);
-
-    // ✅ STREAMING (prevents 16KB bug)
-    const chunkSize = 64 * 1024; // 64KB
-    let offset = 0;
-
-    function sendChunk() {
-      if (offset >= output.length) {
-        return res.end();
-      }
-
-      const end = Math.min(offset + chunkSize, output.length);
-      const chunk = output.slice(offset, end);
-
-      res.write(chunk);
-      offset = end;
-
-      setImmediate(sendChunk);
-    }
-
-    sendChunk();
+    // ✅ Send file back
+    res.download(outputPath, "patched.mp4", () => {
+      try {
+        fs.unlinkSync(inputPath);
+        fs.unlinkSync(outputPath);
+      } catch {}
+    });
 
   } catch (err) {
-    console.error("ERROR:", err);
-    res.status(500).send("Processing error");
+    console.error(err);
+    res.status(500).send("Patch failed");
   }
 });
 
-// Start server
-const PORT = process.env.PORT || 10000;
-
-app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+// root check
+app.get("/", (req, res) => {
+  res.send("Video patcher is running");
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () =>
+  console.log("Server running on port " + PORT)
+);
