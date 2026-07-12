@@ -15,34 +15,21 @@ function sizeAt(buf, offset, end) {
   return s; 
 }
 
-function parseBoxes(buf, start, end, depth = 0) { 
-  if (depth > 20) throw new Error("Box nesting too deep (possible cycle or bomb)");
-  if (start < 0 || end > buf.length) throw new Error("Invalid box range");
-  
+function parseBoxes(buf, start, end) { 
   const boxes = []; 
   let offset = start; 
-  
   while (offset + 8 <= end) { 
     const size = sizeAt(buf, offset, end); 
-    
-    if (!size || size < 8) throw new Error(`Invalid box size ${size} at offset ${offset}`);
-    if (offset + size > end) throw new Error(`Box extends past buffer at offset ${offset}`);
-    if (size > 100 * 1024 * 1024) throw new Error(`Box suspiciously large (${size} bytes)`);
-    
+    if (!size || offset + size > end) break; 
     const type = boxType(buf, offset); 
     const header = u32(buf, offset) === 1 ? 16 : 8; 
     const item = { type, start: offset, end: offset + size, size, header, children: null }; 
-    
     let cStart = offset + header; 
     if (type === "meta") cStart += 4; 
-    if (CONTAINERS.has(type) && cStart < offset + size) {
-      item.children = parseBoxes(buf, cStart, offset + size, depth + 1);
-    }
-    
+    if (CONTAINERS.has(type) && cStart < offset + size) item.children = parseBoxes(buf, cStart, offset + size); 
     boxes.push(item); 
     offset += size; 
   } 
-  
   return boxes; 
 }
 
@@ -89,29 +76,17 @@ function patchStsz(buf, node, extra) {
   return box("stsz", outBuf); 
 }
 
-function patchStsc(buf, node, stblNode, extra) { 
+function patchStsc(buf, node, extra) { 
   if (extra < 1) return raw(buf, node); 
   const p = payload(buf, node); 
   const flags = p.subarray(0, 4); 
   const count = u32(p, 4); 
   const list = []; 
-  
   for (let i = 0, off = 8; i < count && off + 12 <= p.length; i++, off += 12) { 
     list.push([u32(p, off), u32(p, off + 4), u32(p, off + 8)]); 
   } 
-  
-  const sampleIdx = list.length ? list[list.length - 1][2] : 1;
-  
-  const stco = findChild(stblNode, "stco") || findChild(stblNode, "co64");
-  let lastChunk = 0;
-  if (stco) {
-    const stcoPayload = payload(buf, stco);
-    const stcoCount = u32(stcoPayload, 4);
-    lastChunk = stcoCount > 0 ? stcoCount : 1;
-  }
-  
-  list.push([lastChunk + 1, 1, sampleIdx]); 
-  
+  const sampleIdx = list.length ? list[list.length - 1][2] : 1; 
+  list.push([extra + 1, 1, sampleIdx]); 
   const outBuf = Buffer.alloc(8 + list.length * 12); 
   flags.copy(outBuf, 0); 
   outBuf.writeUInt32BE(list.length, 4); 
@@ -128,33 +103,8 @@ function patchStco(buf, node, moovOffset, mdatEnd, extra) {
   const flags = p.subarray(0, 4); 
   const count = u32(p, 4); 
   const list = []; 
-  
-  const MAX_32BIT = 0xFFFFFFFF;
-  if (moovOffset > 0x7FFFFFFF) {
-    throw new Error("Video exceeds 4GB. stco (32-bit) cannot handle this offset. Requires co64 upgrade.");
-  }
-  if (mdatEnd > MAX_32BIT) {
-    throw new Error("Video exceeds 4GB. Cannot use stco with mdat ending at " + mdatEnd + ". Use co64.");
-  }
-  
-  for (let i = 0, off = 8; i < count && off + 4 <= p.length; i++, off += 4) {
-    const oldOffset = u32(p, off);
-    const newOffset = oldOffset + moovOffset;
-    
-    if (newOffset > MAX_32BIT) {
-      throw new Error(`Chunk ${i}: offset overflow (${oldOffset} + ${moovOffset} > 4GB). Video too large.`);
-    }
-    
-    list.push(newOffset >>> 0);
-  }
-  
-  for (let i = 0; i < extra; i++) {
-    if (mdatEnd > MAX_32BIT) {
-      throw new Error(`Fake sample ${i}: mdatEnd (${mdatEnd}) exceeds 32-bit. Use co64.`);
-    }
-    list.push(mdatEnd >>> 0);
-  }
-  
+  for (let i = 0, off = 8; i < count && off + 4 <= p.length; i++, off += 4) list.push(u32(p, off) + moovOffset); 
+  for (let i = 0; i < extra; i++) list.push(mdatEnd); 
   const outBuf = Buffer.alloc(8 + list.length * 4); 
   flags.copy(outBuf, 0); 
   outBuf.writeUInt32BE(list.length, 4); 
@@ -167,15 +117,8 @@ function patchCo64(buf, node, moovOffset, mdatEnd, extra) {
   const flags = p.subarray(0, 4); 
   const count = u32(p, 4); 
   const list = []; 
-  
-  for (let i = 0, off = 8; i < count && off + 8 <= p.length; i++, off += 8) {
-    const oldOffset = u64(p, off);
-    const newOffset = oldOffset + moovOffset;
-    list.push(BigInt(newOffset));
-  }
-  
+  for (let i = 0, off = 8; i < count && off + 8 <= p.length; i++, off += 8) list.push(BigInt(u64(p, off) + moovOffset)); 
   for (let i = 0; i < extra; i++) list.push(BigInt(mdatEnd)); 
-  
   const outBuf = Buffer.alloc(8 + list.length * 8); 
   flags.copy(outBuf, 0); 
   outBuf.writeUInt32BE(list.length, 4); 
@@ -183,54 +126,25 @@ function patchCo64(buf, node, moovOffset, mdatEnd, extra) {
   return box("co64", outBuf); 
 }
 
-function patchSharkSampleTableMethod(buf) {
-  if (!Buffer.isBuffer(buf)) {
-    throw new Error("Input must be a Buffer");
-  }
-  
-  if (buf.length < 32) {
-    throw new Error("File too small to be valid MP4 (< 32 bytes)");
-  }
-  
-  if (buf.length > 30 * 1024 * 1024) {
-    throw new Error("File exceeds 30MB limit");
-  }
-  
-  const ftypSize = buf.readUInt32BE(0);
-  if (ftypSize < 8 || ftypSize > Math.min(1000, buf.length)) {
-    throw new Error("Invalid ftyp size");
-  }
-  
-  if (buf.toString("latin1", 4, 8) !== "ftyp") {
-    throw new Error("Not a valid MP4 file (missing ftyp box at start)");
-  }
-  
+async function patchSharkSampleTableMethod(buf) {
   const boxes = parseBoxes(buf, 0, buf.length);
   const moov = boxes.find(b => b.type === "moov");
   const mdat = boxes.find(b => b.type === "mdat");
   
-  if (!moov) throw new Error("moov box not found in MP4");
-  if (!mdat) throw new Error("mdat box not found in MP4");
-  
-  if (mdat.header === 16) {
-    throw new Error("Large MP4 with 64-bit mdat size detected (>4GB). Not supported. Re-mux with faststart first.");
-  }
+  if (!moov || !mdat) throw new Error("moov/mdat not found");
+  if (mdat.header !== 8) throw new Error("64-bit mdat header is not supported");
 
   const traks = (moov.children || []).filter(b => b.type === "trak");
   const videoTrak = traks.find(t => isVideoTrak(buf, t));
-  
-  if (!videoTrak) throw new Error("No video track found in MP4");
+  if (!videoTrak) throw new Error("video track not found");
 
   const stbl = findStbl(videoTrak);
-  if (!stbl) throw new Error("stbl (sample table) not found in video track");
+  if (!stbl) throw new Error("video stbl not found");
 
   const stsz = findChild(stbl, "stsz");
   const stsc = findChild(stbl, "stsc");
   const stco = findChild(stbl, "stco") || findChild(stbl, "co64");
-  
-  if (!stsz || !stsc || !stco) {
-    throw new Error("Missing critical sample table boxes (stsz/stsc/stco)");
-  }
+  if (!stsz || !stsc || !stco) throw new Error("video stsz/stsc/stco was not found");
 
   const sampleCount = stszInfo(buf, stsz).count;
   const targetCount = Math.floor(sampleCount * 20 / 3);
@@ -247,7 +161,9 @@ function patchSharkSampleTableMethod(buf) {
     if (isVideo && node.type === "stsz") return patchStsz(buf, node, extraSamples);
     if (isVideo && node.type === "stts") return raw(buf, node);
     if (isVideo && node.type === "stsc" && extraSamples > 0) {
-      return patchStsc(buf, node, stbl, extraSamples);
+      const co = findChild(stbl, "stco") || findChild(stbl, "co64");
+      const chunkCount = u32(payload(buf, co), 4);
+      return patchStsc(buf, node, chunkCount);
     }
     if (node.type === "stco") return patchStco(buf, node, moovOffset, mdatEnd, extraSamples);
     if (node.type === "co64") return patchCo64(buf, node, moovOffset, mdatEnd, extraSamples);
@@ -283,8 +199,8 @@ function patchSharkSampleTableMethod(buf) {
   mdatEnd = mdat.end + delta;
   newMoov = buildMoov(delta, mdatEnd);
 
-  // ✅ FIX: DO NOT MODIFY MDAT! Just use the original unchanged
-  const newMdat = raw(buf, mdat);
+  const mdatData = buf.subarray(mdat.start + 8, mdat.end);
+  const newMdat = extraSamples > 0 ? Buffer.concat([w32(8 + mdatData.length + 8), Buffer.from("mdat", "latin1"), mdatData, FAKE_SAMPLE]) : raw(buf, mdat);
 
   const out = [];
   const freeBox = Buffer.concat([w32(8), Buffer.from("free", "latin1")]);
@@ -305,14 +221,7 @@ function patchSharkSampleTableMethod(buf) {
   }
 
   return {
-    output: Buffer.concat(out),
-    stats: {
-      originalSize: buf.length,
-      patchedSize: Buffer.concat(out).length,
-      sampleCount: sampleCount,
-      extraSamples: extraSamples,
-      targetCount: targetCount
-    }
+    output: Buffer.concat(out)
   };
 }
 
