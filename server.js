@@ -3,13 +3,17 @@ const multer = require('multer');
 const cors = require('cors');
 
 const app = express();
+
+// ✅ Enable CORS
 app.use(cors());
 
+// 🔒 Memory upload configuration (30MB Limit)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 30 * 1024 * 1024 } // 30MB
+  limits: { fileSize: 30 * 1024 * 1024 } 
 });
 
+// 🔐 API key protection
 const API_KEY = "JOY_API_KEY";
 
 app.use((req, res, next) => {
@@ -20,8 +24,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// 📦 Load the patcher
 const { patchSharkSampleTableMethod } = require('./patcher');
 
+// 🚀 MAIN PATCH ROUTE
 app.post('/patch', upload.single('video'), async (req, res) => {
   try {
     if (!req.file) {
@@ -30,28 +36,41 @@ app.post('/patch', upload.single('video'), async (req, res) => {
 
     const inputBuffer = req.file.buffer;
 
-    // ⚡ Await the object wrapper return
+    // ⚡ Run the patcher
     const result = await patchSharkSampleTableMethod(inputBuffer);
 
     if (!result || !result.output) {
       return res.status(500).send('Invalid patch result');
     }
 
-    // 🎯 Safely isolate the raw binary stream data payload
-    const outputBuffer = Buffer.from(result.output);
+    // 🎯 Extract the raw output buffer directly
+    const finalBuffer = result.output;
 
-    res.set({
+    // 🏷️ Set exact headers
+    res.writeHead(200, {
       'Content-Type': 'video/mp4',
       'Content-Disposition': 'attachment; filename="patched.mp4"',
-      'Content-Length': outputBuffer.length
+      'Content-Length': finalBuffer.length
     });
 
-    res.send(outputBuffer);
+    // 🚀 Stream the video buffer cleanly without Express conversions
+    res.write(finalBuffer);
+    res.end();
 
   } catch (err) {
     console.error("PATCH ERROR:", err);
-    res.status(500).send('Patch failed');
+    if (!res.headersSent) {
+      res.status(500).send('Patch failed');
+    }
   }
+});
+
+// ⚠️ Error handler
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).send('File too large.');
+  }
+  next(err);
 });
 
 const PORT = process.env.PORT || 3000;
