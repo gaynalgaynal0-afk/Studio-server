@@ -126,8 +126,8 @@ function patchCo64(buf, node, moovOffset, mdatEnd, extra) {
   return box("co64", outBuf); 
 }
 
-async function patchSharkSampleTableMethod(buffer) {
-  const boxes = parseBoxes(buffer, 0, buffer.length);
+async function patchSharkSampleTableMethod(buf) {
+  const boxes = parseBoxes(buf, 0, buf.length);
   const moov = boxes.find(b => b.type === "moov");
   const mdat = boxes.find(b => b.type === "mdat");
   
@@ -135,7 +135,7 @@ async function patchSharkSampleTableMethod(buffer) {
   if (mdat.header !== 8) throw new Error("64-bit mdat header is not supported");
 
   const traks = (moov.children || []).filter(b => b.type === "trak");
-  const videoTrak = traks.find(t => isVideoTrak(buffer, t));
+  const videoTrak = traks.find(t => isVideoTrak(buf, t));
   if (!videoTrak) throw new Error("video track not found");
 
   const stbl = findStbl(videoTrak);
@@ -146,7 +146,7 @@ async function patchSharkSampleTableMethod(buffer) {
   const stco = findChild(stbl, "stco") || findChild(stbl, "co64");
   if (!stsz || !stsc || !stco) throw new Error("video stsz/stsc/stco was not found");
 
-  const sampleCount = stszInfo(buffer, stsz).count;
+  const sampleCount = stszInfo(buf, stsz).count;
   const targetCount = Math.floor(sampleCount * 20 / 3);
   const extraSamples = Math.max(0, targetCount - sampleCount);
 
@@ -154,23 +154,23 @@ async function patchSharkSampleTableMethod(buffer) {
 
   function patchBox(node, moovOffset, mdatEnd) {
     if (node.type === "udta") return null;
-    if (node.type === "mdhd") return patchMdhdLang(buffer, node);
-    if (node.type === "hdlr") return patchHdlrName(buffer, node);
+    if (node.type === "mdhd") return patchMdhdLang(buf, node);
+    if (node.type === "hdlr") return patchHdlrName(buf, node);
     
     const isVideo = currentTrak === videoTrak;
-    if (isVideo && node.type === "stsz") return patchStsz(buffer, node, extraSamples);
-    if (isVideo && node.type === "stts") return raw(buffer, node);
+    if (isVideo && node.type === "stsz") return patchStsz(buf, node, extraSamples);
+    if (isVideo && node.type === "stts") return raw(buf, node);
     if (isVideo && node.type === "stsc" && extraSamples > 0) {
       const co = findChild(stbl, "stco") || findChild(stbl, "co64");
-      const chunkCount = u32(payload(buffer, co), 4);
-      return patchStsc(buffer, node, chunkCount);
+      const chunkCount = u32(payload(buf, co), 4);
+      return patchStsc(buf, node, chunkCount);
     }
-    if (node.type === "stco") return patchStco(buffer, node, moovOffset, mdatEnd, extraSamples);
-    if (node.type === "co64") return patchCo64(buffer, node, moovOffset, mdatEnd, extraSamples);
+    if (node.type === "stco") return patchStco(buf, node, moovOffset, mdatEnd, extraSamples);
+    if (node.type === "co64") return patchCo64(buf, node, moovOffset, mdatEnd, extraSamples);
     
     if (node.children) {
       const parts = [];
-      if (node.type === "meta") parts.push(payload(buffer, node).subarray(0, 4));
+      if (node.type === "meta") parts.push(payload(buf, node).subarray(0, 4));
       for (const child of node.children) {
         const prev = currentTrak;
         if (child.type === "trak") currentTrak = child;
@@ -180,7 +180,7 @@ async function patchSharkSampleTableMethod(buffer) {
       }
       return box(node.type, Buffer.concat(parts));
     }
-    return raw(buffer, node);
+    return raw(buf, node);
   }
 
   function buildMoov(moovOffset, mdatEnd) {
@@ -190,24 +190,24 @@ async function patchSharkSampleTableMethod(buffer) {
 
   let mdatEnd = mdat.end;
   let newMoov = buildMoov(0, mdatEnd);
-  let delta = newMoov.length - raw(buffer, moov).length;
+  let delta = newMoov.length - raw(buf, moov).length;
   
   mdatEnd = mdat.end + delta;
   newMoov = buildMoov(delta, mdatEnd);
-  delta = newMoov.length - raw(buffer, moov).length;
+  delta = newMoov.length - raw(buf, moov).length;
   
   mdatEnd = mdat.end + delta;
   newMoov = buildMoov(delta, mdatEnd);
 
-  const mdatData = buffer.subarray(mdat.start + 8, mdat.end);
-  const newMdat = extraSamples > 0 ? Buffer.concat([w32(8 + mdatData.length + 8), Buffer.from("mdat", "latin1"), mdatData, FAKE_SAMPLE]) : raw(buffer, mdat);
+  const mdatData = buf.subarray(mdat.start + 8, mdat.end);
+  const newMdat = extraSamples > 0 ? Buffer.concat([w32(8 + mdatData.length + 8), Buffer.from("mdat", "latin1"), mdatData, FAKE_SAMPLE]) : raw(buf, mdat);
 
   const out = [];
   const freeBox = Buffer.concat([w32(8), Buffer.from("free", "latin1")]);
   
   for (const b of boxes) {
     if (b.type === "ftyp") {
-      out.push(raw(buffer, b));
+      out.push(raw(buf, b));
       out.push(freeBox);
     } else if (b.type === "moov") {
       out.push(newMoov);
@@ -216,7 +216,7 @@ async function patchSharkSampleTableMethod(buffer) {
     } else if (b.type === "free" || b.type === "wide") {
       continue;
     } else {
-      out.push(raw(buffer, b));
+      out.push(raw(buf, b));
     }
   }
 
