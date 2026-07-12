@@ -29,29 +29,24 @@ function patchMvhd(buffer) {
   
   if (!mvhd) return buffer;
   
-  const mvhdData = buffer.slice(mvhd.offset, mvhd.offset + mvhd.size);
-  const version = mvhdData[8];
+  const version = buffer[mvhd.offset + 8];
   
   if (version === 0) {
-    const timeScaleOffset = 20;
-    const durationOffset = 24;
-    if (mvhdData.length >= durationOffset + 4) {
-      const timescale = mvhdData.readUInt32BE(timeScaleOffset);
-      mvhdData.writeUInt32BE(90000, timeScaleOffset);
-      
-      const duration = mvhdData.readUInt32BE(durationOffset);
-      const newDuration = Math.floor((duration / timescale) * 90000);
-      mvhdData.writeUInt32BE(newDuration, durationOffset);
-    }
+    const timeScaleOffset = mvhd.offset + 20;
+    const durationOffset = mvhd.offset + 24;
+    
+    const timescale = buffer.readUInt32BE(timeScaleOffset);
+    buffer.writeUInt32BE(90000, timeScaleOffset);
+    
+    const duration = buffer.readUInt32BE(durationOffset);
+    const newDuration = Math.floor((duration / timescale) * 90000);
+    buffer.writeUInt32BE(newDuration, durationOffset);
   } else if (version === 1) {
-    const timeScaleOffset = 28;
-    const durationOffset = 32;
-    if (mvhdData.length >= durationOffset + 8) {
-      const timescale = mvhdData.readUInt32BE(timeScaleOffset);
-      mvhdData.writeUInt32BE(90000, timeScaleOffset);
-      
-      mvhdData.writeBigUInt64BE(90000n, durationOffset);
-    }
+    const timeScaleOffset = mvhd.offset + 28;
+    const durationOffset = mvhd.offset + 32;
+    
+    buffer.writeUInt32BE(90000, timeScaleOffset);
+    buffer.writeBigUInt64BE(90000n, durationOffset);
   }
   
   return buffer;
@@ -73,29 +68,24 @@ function patchMdhd(buffer) {
     const mdhd = findBox(buffer, 'mdhd', mdhdStart);
     
     if (mdhd) {
-      const mdhdData = buffer.slice(mdhd.offset, mdhd.offset + mdhd.size);
-      const version = mdhdData[8];
+      const version = buffer[mdhd.offset + 8];
       
       if (version === 0) {
-        const timeScaleOffset = 20;
-        const durationOffset = 24;
-        if (mdhdData.length >= durationOffset + 4) {
-          const timescale = mdhdData.readUInt32BE(timeScaleOffset);
-          mdhdData.writeUInt32BE(90000, timeScaleOffset);
-          
-          const duration = mdhdData.readUInt32BE(durationOffset);
-          const newDuration = Math.floor((duration / timescale) * 90000);
-          mdhdData.writeUInt32BE(newDuration, durationOffset);
-        }
+        const timeScaleOffset = mdhd.offset + 20;
+        const durationOffset = mdhd.offset + 24;
+        
+        const timescale = buffer.readUInt32BE(timeScaleOffset);
+        buffer.writeUInt32BE(90000, timeScaleOffset);
+        
+        const duration = buffer.readUInt32BE(durationOffset);
+        const newDuration = Math.floor((duration / timescale) * 90000);
+        buffer.writeUInt32BE(newDuration, durationOffset);
       } else if (version === 1) {
-        const timeScaleOffset = 28;
-        const durationOffset = 32;
-        if (mdhdData.length >= durationOffset + 8) {
-          const timescale = mdhdData.readUInt32BE(timeScaleOffset);
-          mdhdData.writeUInt32BE(90000, timeScaleOffset);
-          
-          mdhdData.writeBigUInt64BE(90000n, durationOffset);
-        }
+        const timeScaleOffset = mdhd.offset + 28;
+        const durationOffset = mdhd.offset + 32;
+        
+        buffer.writeUInt32BE(90000, timeScaleOffset);
+        buffer.writeBigUInt64BE(90000n, durationOffset);
       }
     }
     
