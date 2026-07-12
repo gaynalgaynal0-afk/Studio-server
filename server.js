@@ -4,11 +4,11 @@ const { patchSharkSampleTableMethod } = require("./patcher");
 
 const app = express();
 
-// Memory storage (no temp files)
+// Use memory storage
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 30 * 1024 * 1024
+    fileSize: 50 * 1024 * 1024 // 50MB max
   }
 });
 
@@ -17,7 +17,7 @@ app.get("/", (req, res) => {
   res.send("Server is running");
 });
 
-// Upload route
+// Upload route (STREAM FIX)
 app.post("/upload", upload.single("video"), (req, res) => {
   try {
     if (!req.file) {
@@ -28,15 +28,31 @@ app.post("/upload", upload.single("video"), (req, res) => {
 
     const { output } = patchSharkSampleTableMethod(inputBuffer);
 
-    res.writeHead(200, {
-      "Content-Type": "video/mp4",
-      "Content-Length": output.length
-    });
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Content-Length", output.length);
 
-    res.end(output);
+    // ✅ STREAMING (prevents 16KB bug)
+    const chunkSize = 64 * 1024; // 64KB
+    let offset = 0;
+
+    function sendChunk() {
+      if (offset >= output.length) {
+        return res.end();
+      }
+
+      const end = Math.min(offset + chunkSize, output.length);
+      const chunk = output.slice(offset, end);
+
+      res.write(chunk);
+      offset = end;
+
+      setImmediate(sendChunk);
+    }
+
+    sendChunk();
 
   } catch (err) {
-    console.error(err);
+    console.error("ERROR:", err);
     res.status(500).send("Processing error");
   }
 });
